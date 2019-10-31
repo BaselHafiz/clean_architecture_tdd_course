@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:bloc/bloc.dart';
 import 'package:clean_architecture_tdd_course/core/error/failures.dart';
+import 'package:clean_architecture_tdd_course/core/usecases/usacase.dart';
 import 'package:clean_architecture_tdd_course/core/util/input_converter.dart';
+import 'package:clean_architecture_tdd_course/features/number_trivia/domain/entities/number_trivia.dart';
 import 'package:clean_architecture_tdd_course/features/number_trivia/domain/usecases/get_concrete_number_trivia.dart';
 import 'package:clean_architecture_tdd_course/features/number_trivia/domain/usecases/get_random_number_trivia.dart';
 import 'package:dartz/dartz.dart';
@@ -39,21 +41,48 @@ class NumberTriviaBloc extends Bloc<NumberTriviaEvent, NumberTriviaState> {
   @override
   Stream<NumberTriviaState> mapEventToState(NumberTriviaEvent event) async* {
     if (event is GetTriviaForConcreteNumber) {
-      final Either<Failure, int> inputEither =
+      final inputEither =
           inputConverter.stringToUnsignedInteger(event.numberString);
 
       // Using Either's fold method, we simply have to handle both the failure and success cases and unlike with exceptions.
-      // yield* keyword means yield each.
-      yield* inputEither.fold((Failure failure) async* {
-        // Emit Error state or yield it to the stream<NumberTriviaState>
-        yield Error(message: INVALID_INPUT_FAILURE_MESSAGE);
-      },
-          // Although the "success case" doesn't interest us with the current test,
-          // we still have to handle it somehow.
-          (int integer) => throw UnimplementedError()
-          // Although we are throwing an UnimplementedError from the Right() case which
-          // contains the converted integer, this won't cause any trouble in the two tests we currently have.
-          );
+      // We're using the yield* keyword meaning yield each​to be able to practically nest an async generator (async*) within another async* method.
+      yield* inputEither.fold(
+        (failure) async* {
+          // Emit Error state or yield it to the stream<NumberTriviaState>
+          yield Error(message: INVALID_INPUT_FAILURE_MESSAGE);
+        },
+        (integer) async* {
+          yield Loading();
+          final failureOrTrivia =
+              await getConcreteNumberTrivia(Params(number: integer));
+          yield* _eitherLoadedOrErrorState(failureOrTrivia);
+        },
+      );
+    } else if (event is GetTriviaForRandomNumber) {
+      yield Loading();
+      final failureOrTrivia = await getRandomNumberTrivia(NoParams());
+      yield* _eitherLoadedOrErrorState(failureOrTrivia);
+    }
+  }
+
+  Stream<NumberTriviaState> _eitherLoadedOrErrorState(
+    Either<Failure, NumberTrivia> either,
+  ) async* {
+    yield either.fold(
+      (failure) => Error(message: _mapFailureToMessage(failure)),
+      (trivia) => Loaded(trivia: trivia),
+    );
+  }
+
+  String _mapFailureToMessage(Failure failure) {
+    // Instead of a regular 'if (failure is ServerFailure)...'
+    switch (failure.runtimeType) {
+      case ServerFailure:
+        return SERVER_FAILURE_MESSAGE;
+      case CacheFailure:
+        return CACHE_FAILURE_MESSAGE;
+      default:
+        return 'Unexpected Error';
     }
   }
 }
